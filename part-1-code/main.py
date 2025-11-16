@@ -176,7 +176,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
 
     # Tokenize the dataset
-    dataset = load_dataset("imdb")
+    dataset = load_dataset("imdb", ignore_verifications=True)
     tokenized_dataset = dataset.map(tokenize_function, batched=True)
 
     # Prepare dataset for use by model
