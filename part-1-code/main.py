@@ -107,15 +107,42 @@ def create_augmented_dataloader(args, dataset):
     ################################
     ##### YOUR CODE BEGINGS HERE ###
 
-    # Here, 'dataset' is the original dataset. You should return a dataloader called 'train_dataloader' -- this
-    # dataloader will be for the original training split augmented with 5k random transformed examples from the training set.
-    # You may find it helpful to see how the dataloader was created at other place in this code.
+    # 1) Start from the original training split (raw text + labels)
+    train_raw = dataset["train"]
 
-    raise NotImplementedError
+    # 2) Sample 5,000 random examples from the training set
+    #    We use shuffle with a fixed seed for reproducibility.
+    transformed_subset = train_raw.shuffle(seed=42).select(range(5000))
+
+    # 3) Apply the same custom transformation used for the OOD test set
+    #    (synonym + typo transformation implemented in utils.custom_transform)
+    transformed_subset = transformed_subset.map(
+        custom_transform, load_from_cache_file=False
+    )
+
+    # 4) Concatenate original training data with the transformed subset
+    #    We keep both the original and transformed versions.
+    augmented_raw = datasets.concatenate_datasets([train_raw, transformed_subset])
+
+    # 5) Tokenize the augmented dataset (same pipeline as in __main__)
+    augmented_tokenized = augmented_raw.map(
+        tokenize_function, batched=True, load_from_cache_file=False
+    )
+    augmented_tokenized = augmented_tokenized.remove_columns(["text"])
+    augmented_tokenized = augmented_tokenized.rename_column("label", "labels")
+    augmented_tokenized.set_format("torch")
+
+    # 6) Create a DataLoader over the augmented training set
+    train_dataloader = DataLoader(
+        augmented_tokenized,
+        shuffle=True,
+        batch_size=args.batch_size,
+    )
 
     ##### YOUR CODE ENDS HERE ######
 
     return train_dataloader
+
 
 
 # Create a dataloader for the transformed test set
