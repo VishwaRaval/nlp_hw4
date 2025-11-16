@@ -40,12 +40,29 @@ def do_train(args, model, train_dataloader, save_dir="./out"):
     ################################
     ##### YOUR CODE BEGINGS HERE ###
 
-    # Implement the training loop --- make sure to use the optimizer and lr_sceduler (learning rate scheduler)
-    # Remember that pytorch uses gradient accumumlation so you need to use zero_grad (https://pytorch.org/tutorials/recipes/recipes/zeroing_out_gradients.html)
-    # You can use progress_bar.update(1) to see the progress during training
-    # You can refer to the pytorch tutorial covered in class for reference
+    global device  # use the same device defined in __main__
 
-    raise NotImplementedError
+    for epoch in range(num_epochs):
+        for batch in train_dataloader:
+            # Move batch to device
+            batch = {k: v.to(device) for k, v in batch.items()}
+
+            # Zero out gradients from the previous step
+            optimizer.zero_grad()
+
+            # Forward pass
+            outputs = model(**batch)
+            loss = outputs.loss
+
+            # Backward pass
+            loss.backward()
+
+            # Update parameters
+            optimizer.step()
+            lr_scheduler.step()
+
+            # Update progress bar
+            progress_bar.update(1)
 
     ##### YOUR CODE ENDS HERE ######
 
@@ -54,6 +71,7 @@ def do_train(args, model, train_dataloader, save_dir="./out"):
     model.save_pretrained(save_dir)
 
     return
+
 
 
 # Core evaluation function
