@@ -302,7 +302,7 @@ def eval_epoch(
             gen_ids = model.generate(
                 input_ids=encoder_input,
                 attention_mask=encoder_mask,
-                max_length=256,
+                max_length=512,
                 num_beams=args.num_beams,
                 early_stopping=True,
             )
@@ -338,7 +338,7 @@ def test_inference(args, model, test_loader, model_sql_path, model_record_path):
             gen_ids = model.generate(
                 input_ids=encoder_input,
                 attention_mask=encoder_mask,
-                max_length=256,
+                max_length=512,
                 num_beams=args.num_beams,
                 early_stopping=True,
             )
