@@ -1,7 +1,5 @@
 import os
-
 import torch
-
 import transformers
 from transformers import T5ForConditionalGeneration, T5Config
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
@@ -10,17 +8,31 @@ import wandb
 DEVICE = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 def setup_wandb(args):
-    # Implement this if you wish to use wandb in your experiments
-    pass
+    if not args.use_wandb:
+        return
+    wandb.init(
+        project="hw4-t5-sql",
+        name=args.experiment_name,
+        config=vars(args),
+    )
 
 def initialize_model(args):
-    '''
-    Helper function to initialize the model. You should be either finetuning
-    the pretrained model associated with the 'google-t5/t5-small' checkpoint
-    or training a T5 model initialized with the 'google-t5/t5-small' config
-    from scratch.
-    '''
-    pass
+    """
+    Initialize T5-small.
+
+    If args.finetune is True, load pretrained weights from
+    'google-t5/t5-small'. Otherwise, initialize from config (training from
+    scratch).
+    """
+    ckpt = "google-t5/t5-small"
+    if args.finetune:
+        model = T5ForConditionalGeneration.from_pretrained(ckpt)
+    else:
+        config = T5Config.from_pretrained(ckpt)
+        model = T5ForConditionalGeneration(config)
+
+    model.to(DEVICE)
+    return model
 
 def mkdir(dirpath):
     if not os.path.exists(dirpath):
@@ -30,12 +42,28 @@ def mkdir(dirpath):
             pass
 
 def save_model(checkpoint_dir, model, best):
-    # Save model checkpoint to be able to load the model later
-    pass
+    """
+    Save model checkpoint. We only need state_dict; config comes from
+    'google-t5/t5-small'.
+    """
+    mkdir(checkpoint_dir)
+    fname = "best.pt" if best else "last.pt"
+    ckpt_path = os.path.join(checkpoint_dir, fname)
+    torch.save(model.state_dict(), ckpt_path)
+    print(f"Saved {'best' if best else 'last'} model to {ckpt_path}")
 
 def load_model_from_checkpoint(args, best):
-    # Load model from a checkpoint
-    pass
+    """
+    Load model from checkpoint_dir set in args.checkpoint_dir.
+    """
+    model = initialize_model(args)
+    fname = "best.pt" if best else "last.pt"
+    ckpt_path = os.path.join(args.checkpoint_dir, fname)
+    state = torch.load(ckpt_path, map_location=DEVICE)
+    model.load_state_dict(state)
+    model.to(DEVICE)
+    print(f"Loaded {'best' if best else 'last'} checkpoint from {ckpt_path}")
+    return model
 
 def initialize_optimizer_and_scheduler(args, model, epoch_length):
     optimizer = initialize_optimizer(args, model)
@@ -65,7 +93,7 @@ def initialize_optimizer(args, model):
             optimizer_grouped_parameters, lr=args.learning_rate, eps=1e-8, betas=(0.9, 0.999)
         )
     else:
-        pass
+        raise NotImplementedError(f"Unknown optimizer_type {args.optimizer_type}")
 
     return optimizer
         
@@ -76,9 +104,13 @@ def initialize_scheduler(args, optimizer, epoch_length):
     if args.scheduler_type == "none":
         return None
     elif args.scheduler_type == "cosine":
-        return transformers.get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps)
+        return transformers.get_cosine_schedule_with_warmup(
+            optimizer, num_warmup_steps, num_training_steps
+        )
     elif args.scheduler_type == "linear":
-        return transformers.get_linear_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps)
+        return transformers.get_linear_schedule_with_warmup(
+            optimizer, num_warmup_steps, num_training_steps
+        )
     else:
         raise NotImplementedError
 
@@ -90,7 +122,5 @@ def get_parameter_names(model, forbidden_layer_types):
             for n in get_parameter_names(child, forbidden_layer_types)
             if not isinstance(child, tuple(forbidden_layer_types))
         ]
-    # Add model specific parameters (defined with nn.Parameter) since they are not in any child.
     result += list(model._parameters.keys())
     return result
-
