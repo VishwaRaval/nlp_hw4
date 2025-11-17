@@ -17,22 +17,71 @@ def write_lines(path, lines):
             f.write(line + "\n")
 
 
+def canonicalize_question(q: str) -> str:
+    """
+    Make the *content* of the question start with `list ...`
+    so that all queries have a uniform imperative style.
+
+    Examples:
+      "give me the flights from denver"  -> "list the flights from denver"
+      "what flights from tacoma..."     -> "list flights from tacoma..."
+      "can you show me flights..."      -> "list flights..."
+      "pittsburgh to boston saturday"   -> "list pittsburgh to boston saturday"
+    """
+    # lowercase + basic cleanup
+    q = q.strip().lower()
+    q = re.sub(r"\s+", " ", q)             # collapse internal whitespace
+    q = re.sub(r"[?.,;:!]+$", "", q)       # remove trailing punctuation
+    q = q.strip()
+
+    # Normalise a variety of openings to "list"
+    # (order matters: more specific patterns first)
+    patterns = [
+        r"^(give me|show me|please show me|please give me)\b",
+        r"^(can you|could you|would you)\b",
+        r"^(i would like to see|i'd like to see)\b",
+        r"^(i would like|i'd like|i want|i need)\b",
+        r"^(do you have)\b",
+        r"^(are there|is there)\b",
+        r"^(what is|what are|what)\b",
+        r"^(which is|which are|which)\b",
+        r"^(how much is|how much are|how much)\b",
+        r"^(how many)\b",
+    ]
+
+    for pat in patterns:
+        # Replace the matched opening with "list"
+        q_new = re.sub(pat, "list", q)
+        if q_new != q:
+            q = q_new
+            break
+
+    # If it already starts with "list", just standardize spacing
+    if q.startswith("list "):
+        q = "list " + q[len("list "):].lstrip()
+    elif q == "list":
+        # rare case "list" alone
+        pass
+    else:
+        # Fallback: if nothing matched, prepend "list "
+        q = "list " + q
+
+    # Final whitespace cleanup
+    q = re.sub(r"\s+", " ", q).strip()
+    return q
+
+
 def normalize_nl_query(q: str) -> str:
     """
-    Text-only preprocessing for natural language queries.
+    Preprocess natural language query
 
     Steps:
-    1. Strip leading/trailing whitespace.
-    2. Collapse multiple internal spaces to a single space.
-    3. Remove trailing punctuation such as '?', '.', ',', ';', ':', '!'.
-    4. Add a T5-style task prefix: 'translate English to SQL: '.
+    1. Canonicalize the question to start with "list ..."
+    2. Add T5-style task prefix: "translate English to SQL: "
     """
-    q = q.strip()
-    q = re.sub(r"\s+", " ", q)            # collapse whitespace
-    q = re.sub(r"[?.,;:!]+$", "", q)      # remove trailing punctuation
-    q = q.strip()
-    # T5 task prefix
-    prefixed = f"translate English to SQL: {q}"
+    core = canonicalize_question(q)
+    # Now add the T5 task prefix
+    prefixed = f"translate English to SQL: {core}"
     return prefixed
 
 
@@ -83,7 +132,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print("=" * 80)
-    print("T5 DATA PREPROCESSING (no augmentation)")
+    print("T5 DATA PREPROCESSING (no augmentation, canonical 'list' questions)")
     print("=" * 80)
 
     # Train & dev have SQL
@@ -94,7 +143,7 @@ def main():
     preprocess_split("test", has_sql=False)
 
     print("\nAll preprocessed files written to:", OUTPUT_DIR)
-    print("You can now run compute_t5_statistics.py to fill Tables 1 & 2.")
+    print("All NL queries now begin with: 'translate English to SQL: list ...'")
 
 
 if __name__ == "__main__":
