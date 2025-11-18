@@ -14,7 +14,7 @@ class T5Dataset(Dataset):
         """
         T5 text-to-SQL dataset.
 
-        data_folder: normally 'data_preprocessed'
+        data_folder: 'data' or 'data_preprocessed'
         split: 'train', 'dev', or 'test'
         use_schema: if True, prepend the DB schema to each NL query
         """
@@ -26,11 +26,8 @@ class T5Dataset(Dataset):
         # Load schema text once if requested
         self.schema_text = None
         if self.use_schema:
-            with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
-                # Simple flattening: join non-empty lines with spaces
-                self.schema_text = " ".join(
-                    line.strip() for line in f if line.strip()
-                )
+            self.schema_text = self._load_schema()
+            print(f"Schema loaded: {len(self.schema_text)} characters")
 
         self.encoder_ids = []
         self.decoder_inputs = []
@@ -38,6 +35,29 @@ class T5Dataset(Dataset):
         self.initial_decoder_inputs = []
 
         self.process_data(data_folder, split, self.tokenizer)
+        
+    def _load_schema(self):
+        """Load and format the database schema."""
+        with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        
+        # Create a more structured schema representation
+        schema_parts = []
+        current_table = None
+        
+        for line in lines:
+            if line.startswith("CREATE TABLE"):
+                # Extract table name
+                current_table = line.split("(")[0].replace("CREATE TABLE", "").strip()
+                schema_parts.append(f"table {current_table}")
+            elif "(" in line and ")" in line and current_table:
+                # This is likely a column definition
+                col_def = line.strip().strip(",")
+                if col_def:
+                    schema_parts.append(col_def)
+        
+        # Join with spaces to create a compact schema
+        return " ".join(schema_parts[:100])  # Limit to first 100 tokens worth
 
     def process_data(self, data_folder, split, tokenizer):
         nl_path = os.path.join(data_folder, f"{split}.nl")
@@ -49,7 +69,7 @@ class T5Dataset(Dataset):
             sql_path = os.path.join(data_folder, f"{split}.sql")
             with open(sql_path, "r", encoding="utf-8") as f:
                 sql_lines = [l.strip() for l in f if l.strip()]
-            assert len(sql_lines) == len(nl_lines)
+            assert len(sql_lines) == len(nl_lines), f"Mismatch: {len(nl_lines)} NL vs {len(sql_lines)} SQL"
 
         # BOS token: use extra_id_0
         bos_id = tokenizer.convert_tokens_to_ids("<extra_id_0>")
@@ -57,9 +77,10 @@ class T5Dataset(Dataset):
         for i, nl in enumerate(nl_lines):
             # Optionally add schema context
             if self.schema_text is not None:
-                encoder_text = f"schema: {self.schema_text} question: {nl}"
+                # More structured prompt
+                encoder_text = f"translate to SQL: schema: {self.schema_text} query: {nl}"
             else:
-                encoder_text = nl
+                encoder_text = f"translate to SQL: {nl}"
 
             enc = tokenizer(
                 encoder_text,
@@ -147,9 +168,20 @@ def test_collate_fn(batch):
 
     return enc_padded, encoder_mask, init_dec
 
-def get_dataloader(batch_size, split, use_schema: bool = False):
-    # *** IMPORTANT: train on preprocessed data ***
-    data_folder = "data_preprocessed"
+def get_dataloader(batch_size, split, use_schema: bool = False, use_preprocessed: bool = True):
+    """
+    Get dataloader for a specific split.
+    
+    Args:
+        batch_size: Batch size
+        split: 'train', 'dev', or 'test'
+        use_schema: Whether to include schema in encoder input
+        use_preprocessed: Whether to use preprocessed data (default: True)
+    """
+    # Choose data folder based on use_preprocessed flag
+    data_folder = "data_preprocessed" if use_preprocessed else "data"
+    print(f"Loading {split} data from: {data_folder}")
+    
     dset = T5Dataset(data_folder, split, use_schema=use_schema)
     shuffle = split == "train"
     collate_fn = normal_collate_fn if split != "test" else test_collate_fn
@@ -160,11 +192,19 @@ def get_dataloader(batch_size, split, use_schema: bool = False):
     return dataloader
 
 
-def load_t5_data(batch_size, test_batch_size, use_schema=False, use_preprocessed=False):
-    # use_preprocessed is currently ignored because we always point to data_preprocessed
-    train_loader = get_dataloader(batch_size, "train", use_schema=use_schema)
-    dev_loader = get_dataloader(test_batch_size, "dev", use_schema=use_schema)
-    test_loader = get_dataloader(test_batch_size, "test", use_schema=use_schema)
+def load_t5_data(batch_size, test_batch_size, use_schema=False, use_preprocessed=True):
+    """
+    Load train, dev, and test dataloaders.
+    
+    Args:
+        batch_size: Training batch size
+        test_batch_size: Eval/test batch size
+        use_schema: Whether to include schema
+        use_preprocessed: Whether to use preprocessed data
+    """
+    train_loader = get_dataloader(batch_size, "train", use_schema=use_schema, use_preprocessed=use_preprocessed)
+    dev_loader = get_dataloader(test_batch_size, "dev", use_schema=use_schema, use_preprocessed=use_preprocessed)
+    test_loader = get_dataloader(test_batch_size, "test", use_schema=use_schema, use_preprocessed=use_preprocessed)
 
     return train_loader, dev_loader, test_loader
 
@@ -174,7 +214,3 @@ def load_lines(path):
         lines = f.readlines()
         lines = [line.strip() for line in lines]
     return lines
-
-# def load_prompting_data(data_folder):
-#     # TODO
-#     return train_x, train_y, dev_x, dev_y, test_x
