@@ -6,18 +6,31 @@ from transformers import T5TokenizerFast
 import torch
 
 PAD_IDX = 0
+SCHEMA_PATH = os.path.join("data", "flight_database.schema")
+
 
 class T5Dataset(Dataset):
-    def __init__(self, data_folder, split):
+    def __init__(self, data_folder, split, use_schema: bool = False):
         """
         T5 text-to-SQL dataset.
 
         data_folder: normally 'data_preprocessed'
         split: 'train', 'dev', or 'test'
+        use_schema: if True, prepend the DB schema to each NL query
         """
         self.split = split
         self.data_folder = data_folder
+        self.use_schema = use_schema
         self.tokenizer = T5TokenizerFast.from_pretrained("google-t5/t5-small")
+
+        # Load schema text once if requested
+        self.schema_text = None
+        if self.use_schema:
+            with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
+                # Simple flattening: join non-empty lines with spaces
+                self.schema_text = " ".join(
+                    line.strip() for line in f if line.strip()
+                )
 
         self.encoder_ids = []
         self.decoder_inputs = []
@@ -42,15 +55,20 @@ class T5Dataset(Dataset):
         bos_id = tokenizer.convert_tokens_to_ids("<extra_id_0>")
 
         for i, nl in enumerate(nl_lines):
+            # Optionally add schema context
+            if self.schema_text is not None:
+                encoder_text = f"schema: {self.schema_text} question: {nl}"
+            else:
+                encoder_text = nl
+
             enc = tokenizer(
-                nl,
+                encoder_text,
                 truncation=True,
                 max_length=512,
                 padding=False,
                 return_attention_mask=False,
             )
             enc_ids = torch.tensor(enc["input_ids"], dtype=torch.long)
-
             self.encoder_ids.append(enc_ids)
 
             if split != "test":
@@ -129,28 +147,33 @@ def test_collate_fn(batch):
 
     return enc_padded, encoder_mask, init_dec
 
-def get_dataloader(batch_size, split):
+def get_dataloader(batch_size, split, use_schema: bool = False):
     # *** IMPORTANT: train on preprocessed data ***
-    data_folder = 'data_preprocessed'
-    dset = T5Dataset(data_folder, split)
+    data_folder = "data_preprocessed"
+    dset = T5Dataset(data_folder, split, use_schema=use_schema)
     shuffle = split == "train"
     collate_fn = normal_collate_fn if split != "test" else test_collate_fn
 
-    dataloader = DataLoader(dset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn)
+    dataloader = DataLoader(
+        dset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_fn
+    )
     return dataloader
 
-def load_t5_data(batch_size, test_batch_size):
-    train_loader = get_dataloader(batch_size, "train")
-    dev_loader = get_dataloader(test_batch_size, "dev")
-    test_loader = get_dataloader(test_batch_size, "test")
-    
+
+def load_t5_data(batch_size, test_batch_size, use_schema=False, use_preprocessed=False):
+    # use_preprocessed is currently ignored because we always point to data_preprocessed
+    train_loader = get_dataloader(batch_size, "train", use_schema=use_schema)
+    dev_loader = get_dataloader(test_batch_size, "dev", use_schema=use_schema)
+    test_loader = get_dataloader(test_batch_size, "test", use_schema=use_schema)
+
     return train_loader, dev_loader, test_loader
 
-# def load_lines(path):
-#     with open(path, 'r') as f:
-#         lines = f.readlines()
-#         lines = [line.strip() for line in lines]
-#     return lines
+
+def load_lines(path):
+    with open(path, 'r') as f:
+        lines = f.readlines()
+        lines = [line.strip() for line in lines]
+    return lines
 
 # def load_prompting_data(data_folder):
 #     # TODO

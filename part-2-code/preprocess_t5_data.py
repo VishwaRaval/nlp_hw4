@@ -5,84 +5,82 @@ INPUT_DIR = "data"
 OUTPUT_DIR = "data_preprocessed"
 
 
-def read_lines(path):
+def read_lines(path: str):
     with open(path, "r", encoding="utf-8") as f:
         return [line.rstrip("\n") for line in f]
 
 
-def write_lines(path, lines):
+def write_lines(path: str, lines):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         for line in lines:
             f.write(line + "\n")
 
 
-def canonicalize_question(q: str) -> str:
+def canonicalize_question(text: str) -> str:
     """
-    Make the *content* of the question start with `list ...`
-    so that all queries have a uniform imperative style.
-
-    Examples:
-      "give me the flights from denver"  -> "list the flights from denver"
-      "what flights from tacoma..."     -> "list flights from tacoma..."
-      "can you show me flights..."      -> "list flights..."
-      "pittsburgh to boston saturday"   -> "list pittsburgh to boston saturday"
-    """
-    # lowercase + basic cleanup
-    q = q.strip().lower()
-    q = re.sub(r"\s+", " ", q)             # collapse internal whitespace
-    q = re.sub(r"[?.,;:!]+$", "", q)       # remove trailing punctuation
-    q = q.strip()
-
-    # Normalise a variety of openings to "list"
-    # (order matters: more specific patterns first)
-    patterns = [
-        r"^(give me|show me|please show me|please give me)\b",
-        r"^(can you|could you|would you)\b",
-        r"^(i would like to see|i'd like to see)\b",
-        r"^(i would like|i'd like|i want|i need)\b",
-        r"^(do you have)\b",
-        r"^(are there|is there)\b",
-        r"^(what is|what are|what)\b",
-        r"^(which is|which are|which)\b",
-        r"^(how much is|how much are|how much)\b",
-        r"^(how many)\b",
-    ]
-
-    for pat in patterns:
-        # Replace the matched opening with "list"
-        q_new = re.sub(pat, "list", q)
-        if q_new != q:
-            q = q_new
-            break
-
-    # If it already starts with "list", just standardize spacing
-    if q.startswith("list "):
-        q = "list " + q[len("list "):].lstrip()
-    elif q == "list":
-        # rare case "list" alone
-        pass
-    else:
-        # Fallback: if nothing matched, prepend "list "
-        q = "list " + q
-
-    # Final whitespace cleanup
-    q = re.sub(r"\s+", " ", q).strip()
-    return q
-
-
-def normalize_nl_query(q: str) -> str:
-    """
-    Preprocess natural language query
+    Preprocess a natural language query so that queries have a uniform form.
 
     Steps:
-    1. Canonicalize the question to start with "list ..."
-    2. Add T5-style task prefix: "translate English to SQL: "
+      1. Lowercase
+      2. Normalize leading phrases (give me, show me, what..., can you..., etc.) to start with "list "
+      3. Collapse extra whitespace
+      4. Remove punctuation at the end
+      5. Ensure the query begins with "list "
     """
-    core = canonicalize_question(q)
-    # Now add the T5 task prefix
-    prefixed = f"translate English to SQL: {core}"
-    return prefixed
+    # Step 1: lowercase first to simplify regex handling
+    q = text.lower()
+
+    # Handle leading polite / request phrases in grouped patterns
+
+    # Direct request patterns: "give me", "show me", "provide me", ...
+    direct_openings = [
+        r"give me",
+        r"show me",
+        r"provide me",
+        r"tell me",
+        r"find me",
+        r"get me",
+    ]
+    direct_pattern = r"^(" + "|".join(direct_openings) + r")(\s+the)?\s+"
+    q = re.sub(direct_pattern, "list ", q)
+
+    # Desire patterns: "i want", "i need", "i would like", "i'd like"
+    desire_openings = [
+        r"i want",
+        r"i need",
+        r"i would like",
+        r"i'd like",
+    ]
+    desire_pattern = r"^(" + "|".join(desire_openings) + r")(\s+the)?\s+"
+    q = re.sub(desire_pattern, "list ", q)
+
+    # "what" / "which" questions, e.g. "what is the", "which are the"
+    q = re.sub(
+        r"^(what|which)(\s+is|\s+are)?(\s+the)?\s+",
+        "list ",
+        q,
+    )
+
+    # "can you" / "could you" questions
+    q = re.sub(
+        r"^(can you|could you)\s+",
+        "list ",
+        q,
+    )
+
+    # Step 3: collapse multiple spaces
+    q = re.sub(r"\s+", " ", q).strip()
+
+    # Step 4: strip trailing punctuation like ?,.,;:!
+    q = re.sub(r"[?.,;:!]+$", "", q).strip()
+
+    # Step 5: make sure everything still starts with "list "
+    # If no earlier pattern matched, prepend "list "
+    if not q.startswith("list "):
+        q = "list " + q.lstrip()
+
+    return q
 
 
 def normalize_sql_query(s: str) -> str:
@@ -108,16 +106,18 @@ def preprocess_split(split_name: str, has_sql: bool = True):
     For test:
       - Only <split>.nl.
 
-    Saves preprocessed files under OUTPUT_DIR with the same filenames.
+    Writes preprocessed files under OUTPUT_DIR with the same filenames.
     """
+    # Natural language side
     in_nl_path = os.path.join(INPUT_DIR, f"{split_name}.nl")
     out_nl_path = os.path.join(OUTPUT_DIR, f"{split_name}.nl")
 
     nl_raw = read_lines(in_nl_path)
-    nl_proc = [normalize_nl_query(q) for q in nl_raw]
+    nl_proc = [canonicalize_question(q) for q in nl_raw]
     write_lines(out_nl_path, nl_proc)
     print(f"[{split_name}] NL: {len(nl_proc)} examples -> {out_nl_path}")
 
+    # SQL side (if present)
     if has_sql:
         in_sql_path = os.path.join(INPUT_DIR, f"{split_name}.sql")
         out_sql_path = os.path.join(OUTPUT_DIR, f"{split_name}.sql")
@@ -132,7 +132,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print("=" * 80)
-    print("T5 DATA PREPROCESSING (no augmentation, canonical 'list' questions)")
+    print("T5 DATA PREPROCESSING (no task prefix, canonical 'list' questions)")
     print("=" * 80)
 
     # Train & dev have SQL
@@ -143,7 +143,7 @@ def main():
     preprocess_split("test", has_sql=False)
 
     print("\nAll preprocessed files written to:", OUTPUT_DIR)
-    print("All NL queries now begin with: 'translate English to SQL: list ...'")
+    print("All NL queries now begin with: 'list ...'")
 
 
 if __name__ == "__main__":

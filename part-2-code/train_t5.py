@@ -135,7 +135,8 @@ def train(args, model, train_loader, dev_loader, optimizer, scheduler):
     args.checkpoint_dir = checkpoint_dir
 
     experiment_name = "ft_experiment"
-    gt_sql_path = os.path.join("data", "dev.sql")
+    data_dir = "data_preprocessed" if args.use_preprocessed else "data"
+    gt_sql_path = os.path.join(data_dir, "dev.sql")
     gt_record_path = os.path.join("records", "ground_truth_dev.pkl")
     model_sql_path = os.path.join(
         "results", f"t5_{model_type}_{experiment_name}_dev.sql"
@@ -358,7 +359,10 @@ def main():
 
     # Load the data and the model
     train_loader, dev_loader, test_loader = load_t5_data(
-        args.batch_size, args.test_batch_size
+        args.batch_size,
+        args.test_batch_size,
+        use_schema=args.use_schema,
+        use_preprocessed=args.use_preprocessed,
     )
     model = initialize_model(args)
     optimizer, scheduler = initialize_optimizer_and_scheduler(args, model, len(train_loader))
@@ -374,7 +378,8 @@ def main():
     model_type = "ft" if args.finetune else "scr"
 
     # Dev set
-    gt_sql_path = os.path.join("data", "dev.sql")
+    data_dir = "data_preprocessed" if args.use_preprocessed else "data"
+    gt_sql_path = os.path.join(data_dir, "dev.sql")
     gt_record_path = os.path.join("records", "ground_truth_dev.pkl")
     model_sql_path = os.path.join(
         "results", f"t5_{model_type}_{experiment_name}_dev.sql"
