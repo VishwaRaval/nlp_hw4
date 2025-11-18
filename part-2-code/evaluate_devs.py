@@ -25,8 +25,8 @@ def main():
         print(f"✓ Created ground truth records\n")
     
     # Find all dev prediction files (both SQL and PKL)
-    dev_sql_files = glob.glob(f"{results_dir}/*_dev_*.sql")
-    dev_pkl_files = glob.glob(f"{records_dir}/*_dev_*.pkl")
+    dev_sql_files = glob.glob(f"{results_dir}/*_dev.sql")
+    dev_pkl_files = glob.glob(f"{records_dir}/*_dev.pkl")
     
     # Match SQL files with their corresponding PKL files
     results = []
@@ -55,7 +55,7 @@ def main():
             filename = os.path.basename(sql_file)
             
             # Parse experiment name
-            parts = filename.replace('t5_ft_', '').replace('.sql', '').split('_dev_')
+            parts = filename.replace('t5_ft_', '').replace('.sql', '').split('_dev')
             exp_name = parts[0] if len(parts) > 0 else filename
             
             # Parse epoch
