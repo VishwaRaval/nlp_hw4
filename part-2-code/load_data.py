@@ -26,39 +26,19 @@ class T5Dataset(Dataset):
         # Load schema text once if requested
         self.schema_text = None
         if self.use_schema:
-            self.schema_text = self._load_schema()
-            print(f"Schema loaded: {len(self.schema_text)} characters")
+            with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
+                # Simple flattening: join non-empty lines with spaces
+                lines = [line.strip() for line in f if line.strip()]
+                # Take first 50 lines to avoid making inputs too long
+                self.schema_text = " ".join(lines[:50])
+                print(f"Schema loaded for {split}: {len(self.schema_text)} characters")
 
         self.encoder_ids = []
-        self.decoder_inputs = []
-        self.decoder_targets = []
+        self.decoder_targets = []  # No more decoder_inputs!
         self.initial_decoder_inputs = []
 
         self.process_data(data_folder, split, self.tokenizer)
         
-    def _load_schema(self):
-        """Load and format the database schema."""
-        with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
-            lines = [line.strip() for line in f if line.strip()]
-        
-        # Create a more structured schema representation
-        schema_parts = []
-        current_table = None
-        
-        for line in lines:
-            if line.startswith("CREATE TABLE"):
-                # Extract table name
-                current_table = line.split("(")[0].replace("CREATE TABLE", "").strip()
-                schema_parts.append(f"table {current_table}")
-            elif "(" in line and ")" in line and current_table:
-                # This is likely a column definition
-                col_def = line.strip().strip(",")
-                if col_def:
-                    schema_parts.append(col_def)
-        
-        # Join with spaces to create a compact schema
-        return " ".join(schema_parts[:100])  # Limit to first 100 tokens worth
-
     def process_data(self, data_folder, split, tokenizer):
         nl_path = os.path.join(data_folder, f"{split}.nl")
         with open(nl_path, "r", encoding="utf-8") as f:
@@ -71,13 +51,12 @@ class T5Dataset(Dataset):
                 sql_lines = [l.strip() for l in f if l.strip()]
             assert len(sql_lines) == len(nl_lines), f"Mismatch: {len(nl_lines)} NL vs {len(sql_lines)} SQL"
 
-        # BOS token: use extra_id_0
+        # BOS token for generation only
         bos_id = tokenizer.convert_tokens_to_ids("<extra_id_0>")
 
         for i, nl in enumerate(nl_lines):
             # Optionally add schema context
             if self.schema_text is not None:
-                # More structured prompt
                 encoder_text = f"translate to SQL: schema: {self.schema_text} query: {nl}"
             else:
                 encoder_text = f"translate to SQL: {nl}"
@@ -103,24 +82,13 @@ class T5Dataset(Dataset):
                 )
                 tgt_ids = torch.tensor(dec["input_ids"], dtype=torch.long)
 
-                # teacher forcing: shift right
-                dec_in_ids = torch.full(
-                    (tgt_ids.size(0),), PAD_IDX, dtype=torch.long
-                )
-                dec_in_ids[0] = bos_id
-                if tgt_ids.size(0) > 1:
-                    dec_in_ids[1:] = tgt_ids[:-1]
-
+                # CRITICAL: Store targets WITHOUT shifting!
+                # T5's forward() will handle the shifting when labels are passed
                 self.decoder_targets.append(tgt_ids)
-                self.decoder_inputs.append(dec_in_ids)
-                self.initial_decoder_inputs.append(
-                    torch.tensor(bos_id, dtype=torch.long)
-                )
+                self.initial_decoder_inputs.append(torch.tensor(bos_id, dtype=torch.long))
             else:
-                # test: only encoder + BOS for generation
-                self.initial_decoder_inputs.append(
-                    torch.tensor(bos_id, dtype=torch.long)
-                )
+                # test: only BOS for generation
+                self.initial_decoder_inputs.append(torch.tensor(bos_id, dtype=torch.long))
 
     def __len__(self):
         return len(self.encoder_ids)
@@ -129,8 +97,7 @@ class T5Dataset(Dataset):
         if self.split != "test":
             return (
                 self.encoder_ids[idx],
-                self.decoder_inputs[idx],
-                self.decoder_targets[idx],
+                self.decoder_targets[idx],  # No decoder_inputs!
                 self.initial_decoder_inputs[idx],
             )
         else:
@@ -139,21 +106,22 @@ class T5Dataset(Dataset):
                 self.initial_decoder_inputs[idx],
             )
 
+
 def normal_collate_fn(batch):
     """
     For train/dev:
-      batch elems: (encoder_ids, decoder_inputs, decoder_targets, initial_decoder_input)
+      batch elems: (encoder_ids, decoder_targets, initial_decoder_input)
     """
-    enc_ids, dec_in, dec_tgt, init_dec = zip(*batch)
+    enc_ids, dec_tgt, init_dec = zip(*batch)
 
     enc_padded = pad_sequence(enc_ids, batch_first=True, padding_value=PAD_IDX)
-    dec_in_padded = pad_sequence(dec_in, batch_first=True, padding_value=PAD_IDX)
     dec_tgt_padded = pad_sequence(dec_tgt, batch_first=True, padding_value=PAD_IDX)
 
     encoder_mask = (enc_padded != PAD_IDX).long()
     init_dec = torch.stack(init_dec)  # (B,)
 
-    return enc_padded, encoder_mask, dec_in_padded, dec_tgt_padded, init_dec
+    return enc_padded, encoder_mask, dec_tgt_padded, init_dec
+
 
 def test_collate_fn(batch):
     """
@@ -168,6 +136,7 @@ def test_collate_fn(batch):
 
     return enc_padded, encoder_mask, init_dec
 
+
 def get_dataloader(batch_size, split, use_schema: bool = False, use_preprocessed: bool = True):
     """
     Get dataloader for a specific split.
@@ -180,7 +149,7 @@ def get_dataloader(batch_size, split, use_schema: bool = False, use_preprocessed
     """
     # Choose data folder based on use_preprocessed flag
     data_folder = "data_preprocessed" if use_preprocessed else "data"
-    print(f"Loading {split} data from: {data_folder}")
+    print(f"Loading {split} data from: {data_folder} (schema={use_schema})")
     
     dset = T5Dataset(data_folder, split, use_schema=use_schema)
     shuffle = split == "train"
