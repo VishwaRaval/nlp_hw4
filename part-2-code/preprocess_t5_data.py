@@ -132,7 +132,7 @@ def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     print("=" * 80)
-    print("T5 DATA PREPROCESSING (no task prefix, canonical 'list' questions)")
+    print("T5 DATA PREPROCESSING")
     print("=" * 80)
 
     # Train & dev have SQL
@@ -142,8 +142,10 @@ def main():
     # Test has only NL queries
     preprocess_split("test", has_sql=False)
 
-    print("\nAll preprocessed files written to:", OUTPUT_DIR)
-    print("All NL queries now begin with: 'list ...'")
+    print("\n" + "=" * 80)
+    print("✓ All preprocessed files written to:", OUTPUT_DIR)
+    print("✓ All NL queries now begin with: 'list ...'")
+    print("=" * 80)
 
 
 if __name__ == "__main__":
