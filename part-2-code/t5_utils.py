@@ -18,17 +18,35 @@ def setup_wandb(args):
 
 def initialize_model(args):
     """
-    Initialize T5-small.
+    Initialize T5-small or T5-base with optional dropout increase.
 
     If args.finetune is True, load pretrained weights from
-    'google-t5/t5-small'. Otherwise, initialize from config (training from
-    scratch).
+    'google-t5/t5-small' or 'google-t5/t5-base'. 
+    Otherwise, initialize from config (training from scratch).
     """
-    ckpt = "google-t5/t5-small"
+    # Choose model size
+    if hasattr(args, 'use_base') and args.use_base:
+        ckpt = "google-t5/t5-base"
+        print(f"Using T5-Base (220M parameters)")
+    else:
+        ckpt = "google-t5/t5-small"
+        print(f"Using T5-Small (60M parameters)")
+    
     if args.finetune:
         model = T5ForConditionalGeneration.from_pretrained(ckpt)
+        
+        # IMPROVEMENT: Increase dropout to reduce overfitting
+        if hasattr(args, 'dropout_rate') and args.dropout_rate is not None:
+            model.config.dropout_rate = args.dropout_rate
+            print(f"Set dropout rate to {args.dropout_rate}")
+        elif not hasattr(args, 'dropout_rate'):
+            # Default: increase dropout from 0.1 to 0.2
+            model.config.dropout_rate = 0.2
+            print(f"Increased dropout rate to 0.2 (default was 0.1)")
     else:
         config = T5Config.from_pretrained(ckpt)
+        if hasattr(args, 'dropout_rate') and args.dropout_rate is not None:
+            config.dropout_rate = args.dropout_rate
         model = T5ForConditionalGeneration(config)
 
     model.to(DEVICE)
@@ -44,7 +62,7 @@ def mkdir(dirpath):
 def save_model(checkpoint_dir, model, best):
     """
     Save model checkpoint. We only need state_dict; config comes from
-    'google-t5/t5-small'.
+    'google-t5/t5-small' or 't5-base'.
     """
     mkdir(checkpoint_dir)
     fname = "best.pt" if best else "last.pt"
